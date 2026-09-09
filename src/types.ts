@@ -70,6 +70,19 @@ export interface TimelinePoint {
   clicks: number;
 }
 
+export interface PublisherDomain {
+  id: string;
+  domain: string;
+  status: 'active' | 'blocked';
+  firstSeen: string;
+  lastSeen: string;
+  totalRequests: number;
+  impressions: number;
+  clicks: number;
+  slotsUsed: string[];
+  notes?: string;
+}
+
 export interface DashboardStats {
   totalImpressions: number;
   totalClicks: number;
@@ -79,6 +92,9 @@ export interface DashboardStats {
   activeCreatives: number;
   totalCreatives: number;
   activeSlotsCount: number;
+  activeDomainsCount: number;
+  blockedDomainsCount: number;
+  totalDomainsCount: number;
   slotStats: Record<string, { impressions: number; clicks: number; ctr: number }>;
   timeline: TimelinePoint[];
   recentEvents: TelemetryEvent[];

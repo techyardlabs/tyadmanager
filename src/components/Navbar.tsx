@@ -8,9 +8,11 @@ import {
   Radio,
   RotateCcw,
   Sparkles,
+  Shield,
+  ShieldAlert,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'creatives' | 'campaigns' | 'tags' | 'sandbox';
+export type NavTab = 'dashboard' | 'creatives' | 'campaigns' | 'publishers' | 'tags' | 'sandbox';
 
 interface NavbarProps {
   currentTab: NavTab;
@@ -19,6 +21,7 @@ interface NavbarProps {
   isResetting: boolean;
   autoRefresh: boolean;
   onToggleAutoRefresh: () => void;
+  blockedCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -28,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isResetting,
   autoRefresh,
   onToggleAutoRefresh,
+  blockedCount = 0,
 }) => {
   return (
     <header className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 backdrop-blur-md">
@@ -89,6 +93,26 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <FolderKanban className="w-4 h-4" />
               <span>Campaigns</span>
+            </button>
+
+            <button
+              id="nav-tab-publishers"
+              onClick={() => onTabChange('publishers')}
+              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                currentTab === 'publishers'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Shield className="w-4 h-4" />
+              <span className="flex items-center gap-1.5">
+                Websites &amp; Blocking
+                {blockedCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold border border-rose-500/30">
+                    {blockedCount}
+                  </span>
+                )}
+              </span>
             </button>
 
             <button

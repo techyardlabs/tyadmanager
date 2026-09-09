@@ -55,17 +55,56 @@ async function startServer() {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
+  // Helper to extract requesting publisher domain
+  const extractRequestDomain = (req: Request): string => {
+    const queryDomain = (req.query.domain as string) || '';
+    if (queryDomain) {
+      return adServerDb.normalizeDomain(queryDomain);
+    }
+    const queryRef = (req.query.ref as string) || '';
+    if (queryRef) {
+      return adServerDb.normalizeDomain(queryRef);
+    }
+    const referer = (req.headers.referer as string) || '';
+    if (referer) {
+      return adServerDb.normalizeDomain(referer);
+    }
+    const origin = (req.headers.origin as string) || '';
+    if (origin) {
+      return adServerDb.normalizeDomain(origin);
+    }
+    return 'unknown';
+  };
+
   // ==========================================
   // AD SERVING & TELEMETRY ENGINE (CORS ENABLED)
   // ==========================================
 
-  // 1. Dynamic Ad Delivery Route: GET /api/serve?slot=<slotId>&ref=<publisherUrl>
+  // 1. Dynamic Ad Delivery Route: GET /api/serve?slot=<slotId>&ref=<publisherUrl>&domain=<domain>
   app.get('/api/serve', (req: Request, res: Response) => {
     const slotId = (req.query.slot as string) || '';
-    const referer = (req.query.ref as string) || (req.headers.referer as string) || '';
+    const domain = extractRequestDomain(req);
 
     if (!slotId) {
       res.status(400).json({ error: 'Missing required query parameter: slot' });
+      return;
+    }
+
+    // Check domain blocking
+    const isBlocked = adServerDb.isDomainBlocked(domain);
+
+    // Track request telemetry on domain level
+    adServerDb.recordDomainActivity(domain, slotId, 'request');
+
+    if (isBlocked) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.status(200).json({
+        ad: null,
+        slotId,
+        domain,
+        blocked: true,
+        message: `Ad serving suspended: Website '${domain}' is blocked by the ad server administrator.`,
+      });
       return;
     }
 
@@ -73,7 +112,7 @@ async function startServer() {
 
     if (!ad) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.json({ ad: null, slotId, message: 'No active creative scheduled for this slot' });
+      res.json({ ad: null, slotId, domain, message: 'No active creative scheduled for this slot' });
       return;
     }
 
@@ -84,10 +123,10 @@ async function startServer() {
 
     const clickUrl = `${baseUrl}/api/click/${ad.id}?slot=${encodeURIComponent(
       slotId
-    )}&dest=${encodeURIComponent(ad.targetUrl)}`;
+    )}&domain=${encodeURIComponent(domain)}&dest=${encodeURIComponent(ad.targetUrl)}`;
     const impressionUrl = `${baseUrl}/api/impression/${ad.id}?slot=${encodeURIComponent(
       slotId
-    )}`;
+    )}&domain=${encodeURIComponent(domain)}`;
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json({
@@ -107,6 +146,7 @@ async function startServer() {
         width: ad.width,
         height: ad.height,
         weight: ad.weight,
+        domain,
       },
     });
   });
@@ -115,14 +155,24 @@ async function startServer() {
   const handleImpression = (req: Request, res: Response) => {
     const { creativeId } = req.params;
     const slotId = (req.query.slot as string) || '';
+    const domain = extractRequestDomain(req);
     const userAgent = (req.headers['user-agent'] as string) || '';
-    const referer = (req.headers.referer as string) || '';
+    const referer = (req.headers.referer as string) || (req.query.ref as string) || '';
+
+    // If domain is blocked, reject recording impression
+    if (adServerDb.isDomainBlocked(domain)) {
+      res.status(403).json({ error: 'Domain is blocked', domain });
+      return;
+    }
 
     adServerDb.recordImpression(creativeId, {
       slotId,
       userAgent,
       referer,
     });
+
+    // Record domain-level impression count
+    adServerDb.recordDomainActivity(domain, slotId, 'impression');
 
     // Check if client expects a 1x1 tracking pixel or JSON
     const acceptsImage = req.headers.accept && req.headers.accept.includes('image/');
@@ -131,7 +181,7 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.status(200).send(TRANSPARENT_GIF_1X1);
     } else {
-      res.json({ success: true, recorded: 'impression' });
+      res.json({ success: true, recorded: 'impression', domain });
     }
   };
 
@@ -143,8 +193,23 @@ async function startServer() {
     const { creativeId } = req.params;
     const slotId = (req.query.slot as string) || '';
     const dest = (req.query.dest as string) || '';
+    const domain = extractRequestDomain(req);
     const userAgent = (req.headers['user-agent'] as string) || '';
-    const referer = (req.headers.referer as string) || '';
+    const referer = (req.headers.referer as string) || (req.query.ref as string) || '';
+
+    if (adServerDb.isDomainBlocked(domain)) {
+      res.status(403).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Access Suspended</title></head>
+        <body style="background:#090d16;color:#e2e8f0;font-family:sans-serif;padding:40px;text-align:center;">
+          <h2 style="color:#ef4444;">Ad Delivery Suspended</h2>
+          <p>The referring domain <code>${domain}</code> has been restricted by the ad server administrator.</p>
+        </body>
+        </html>
+      `);
+      return;
+    }
 
     const targetUrl = adServerDb.recordClick(creativeId, {
       slotId,
@@ -152,6 +217,9 @@ async function startServer() {
       referer,
       dest,
     });
+
+    // Record domain-level click count
+    adServerDb.recordDomainActivity(domain, slotId, 'click');
 
     // Clean destination URL fallback
     let safeRedirect = targetUrl;
@@ -270,6 +338,41 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: 'Upload failed: ' + err.message });
     }
+  });
+
+  // Publisher Domain Detection & Protection APIs
+  app.get('/api/publishers', (req: Request, res: Response) => {
+    res.json(adServerDb.getPublisherDomains());
+  });
+
+  app.post('/api/publishers', (req: Request, res: Response) => {
+    const { domain, status, notes } = req.body;
+    if (!domain) {
+      res.status(400).json({ error: 'Domain name is required' });
+      return;
+    }
+    const record = adServerDb.addPublisherDomain(domain, status || 'active', notes || '');
+    res.status(201).json(record);
+  });
+
+  app.put('/api/publishers/:id/toggle', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const updated = adServerDb.toggleDomainStatus(id, status);
+    if (!updated) {
+      res.status(404).json({ error: 'Publisher domain not found' });
+      return;
+    }
+    res.json(updated);
+  });
+
+  app.delete('/api/publishers/:id', (req: Request, res: Response) => {
+    const deleted = adServerDb.deletePublisherDomain(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Publisher domain not found' });
+      return;
+    }
+    res.json({ success: true });
   });
 
   // Reset metrics

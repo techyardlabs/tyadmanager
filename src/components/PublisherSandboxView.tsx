@@ -11,30 +11,68 @@ import {
   ChevronDown,
   Info,
   Plus,
+  ShieldAlert,
+  ShieldCheck,
+  Shield,
 } from 'lucide-react';
-import { PREDEFINED_SLOTS } from '../types.js';
+import { PREDEFINED_SLOTS, PublisherDomain } from '../types.js';
 
 interface PublisherSandboxViewProps {
   onAdEventTriggered?: () => void;
+  onNavigateToPublishers?: () => void;
 }
 
 export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
   onAdEventTriggered,
+  onNavigateToPublishers,
 }) => {
   const [selectedPreviewSlot, setSelectedPreviewSlot] = useState<string>('LB-728x90-1');
   const [activeTab, setActiveTab] = useState<'article' | 'inspector'>('article');
   const [renderedCount, setRenderedCount] = useState(0);
+  const [blockedCount, setBlockedCount] = useState(0);
   const [dynamicSlots, setDynamicSlots] = useState<string[]>([]);
   const [lastEvent, setLastEvent] = useState<string>('Waiting for ad rendering...');
+  const [simulatedDomain, setSimulatedDomain] = useState<string>('theglobalchronicle.media');
+  const [domainStatus, setDomainStatus] = useState<'active' | 'blocked'>('active');
+  const [domainRecordId, setDomainRecordId] = useState<string | null>(null);
+  const [isTogglingDomain, setIsTogglingDomain] = useState(false);
+
+  // Check domain status
+  const checkDomainStatus = async () => {
+    try {
+      const res = await fetch('/api/publishers');
+      if (res.ok) {
+        const pubs: PublisherDomain[] = await res.json();
+        const found = pubs.find(
+          (p) => p.domain.toLowerCase() === simulatedDomain.toLowerCase()
+        );
+        if (found) {
+          setDomainStatus(found.status);
+          setDomainRecordId(found.id);
+        } else {
+          setDomainStatus('active');
+          setDomainRecordId(null);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    checkDomainStatus();
+  }, [simulatedDomain]);
 
   // Initialize or scan ads
   const triggerScan = () => {
     if (typeof window !== 'undefined' && (window as any).AdServer) {
       (window as any).AdServer.scan();
-      // Count rendered ads in DOM
+      // Count rendered vs blocked ads in DOM
       setTimeout(() => {
         const rendered = document.querySelectorAll('.ad-container[data-ad-status="rendered"]');
+        const blocked = document.querySelectorAll('.ad-container[data-ad-status="blocked"]');
         setRenderedCount(rendered.length);
+        setBlockedCount(blocked.length);
       }, 500);
     }
   };
@@ -59,17 +97,65 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
 
     const interval = setInterval(() => {
       const rendered = document.querySelectorAll('.ad-container[data-ad-status="rendered"]');
+      const blocked = document.querySelectorAll('.ad-container[data-ad-status="blocked"]');
       setRenderedCount(rendered.length);
+      setBlockedCount(blocked.length);
     }, 1500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [simulatedDomain]);
 
   const handleRefreshAds = () => {
     if (typeof window !== 'undefined' && (window as any).AdServer) {
       (window as any).AdServer.refresh();
       setLastEvent('Refreshed all ad inventory slots via window.AdServer.refresh()');
       if (onAdEventTriggered) onAdEventTriggered();
+      setTimeout(checkDomainStatus, 500);
+    }
+  };
+
+  const handleToggleThisDomain = async () => {
+    setIsTogglingDomain(true);
+    try {
+      const nextStatus = domainStatus === 'active' ? 'blocked' : 'active';
+      if (domainRecordId) {
+        await fetch(`/api/publishers/${domainRecordId}/toggle`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextStatus }),
+        });
+      } else {
+        // Create it
+        const res = await fetch('/api/publishers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            domain: simulatedDomain,
+            status: nextStatus,
+            notes: 'Created from Sandbox test panel',
+          }),
+        });
+        if (res.ok) {
+          const created = await res.json();
+          setDomainRecordId(created.id);
+        }
+      }
+
+      setDomainStatus(nextStatus);
+      setLastEvent(
+        `Website domain '${simulatedDomain}' is now set to: ${nextStatus.toUpperCase()}. Refreshing slots...`
+      );
+
+      // Force refresh of ads
+      setTimeout(() => {
+        handleRefreshAds();
+      }, 200);
+
+      if (onAdEventTriggered) onAdEventTriggered();
+    } catch (e: any) {
+      alert('Error updating domain status: ' + e.message);
+    } finally {
+      setIsTogglingDomain(false);
     }
   };
 
@@ -98,12 +184,22 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Demonstrating real-world delivery via <code className="text-cyan-400">ad-loader.js</code>, viewability IntersectionObserver, and 302 click redirects.
+              Demonstrating real-world delivery via <code className="text-cyan-400">ad-loader.js</code>, viewability IntersectionObserver, and instant domain-level block enforcement.
             </p>
           </div>
         </div>
 
         <div className="flex items-center space-x-2 w-full md:w-auto">
+          {onNavigateToPublishers && (
+            <button
+              onClick={onNavigateToPublishers}
+              className="flex-1 md:flex-none flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
+            >
+              <Shield className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Websites &amp; Blocklist</span>
+            </button>
+          )}
+
           <button
             id="btn-refresh-sandbox-ads"
             onClick={handleRefreshAds}
@@ -127,23 +223,79 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
       {/* Simulated Browser Window Wrapper */}
       <div className="rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl overflow-hidden">
         {/* Browser Top Chrome / URL Bar */}
-        <div className="bg-slate-900 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
+        <div className="bg-slate-900 px-4 py-3 border-b border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3">
+          <div className="flex items-center space-x-2 shrink-0">
             <span className="w-3 h-3 rounded-full bg-rose-500/80"></span>
             <span className="w-3 h-3 rounded-full bg-amber-500/80"></span>
             <span className="w-3 h-3 rounded-full bg-emerald-500/80"></span>
             <span className="text-xs text-slate-400 font-mono ml-2 hidden sm:inline">
-              Third-Party Publisher Window
+              Third-Party Publisher
             </span>
           </div>
 
-          <div className="flex-1 max-w-lg mx-4 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800 text-xs text-slate-400 font-mono flex items-center space-x-2">
-            <span className="text-emerald-400">https://</span>
-            <span className="text-slate-200">www.theglobalchronicle.media/tech-infrastructure-2026</span>
+          {/* URL & Domain Simulation Box */}
+          <div className="flex-1 max-w-xl w-full bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-mono flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1 truncate text-slate-400">
+              <span className="text-emerald-400">https://</span>
+              <span className="text-white font-bold">{simulatedDomain}</span>
+              <span className="text-slate-500">/tech-infrastructure-2026</span>
+            </div>
+
+            {/* Current Domain Status Pill */}
+            <div className="shrink-0 flex items-center space-x-1.5">
+              {domainStatus === 'blocked' ? (
+                <span className="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">
+                  <ShieldAlert className="w-3 h-3" />
+                  <span>BLOCKED</span>
+                </span>
+              ) : (
+                <span className="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
+                  <ShieldCheck className="w-3 h-3" />
+                  <span>ACTIVE</span>
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs text-slate-400">
-            <span className="font-mono text-cyan-400 font-bold">{renderedCount} Ads Loaded</span>
+          {/* 1-Click Block/Unblock Quick Test Button */}
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              id="btn-sandbox-toggle-domain"
+              onClick={handleToggleThisDomain}
+              disabled={isTogglingDomain}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 ${
+                domainStatus === 'blocked'
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+                  : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
+              }`}
+              title={
+                domainStatus === 'blocked'
+                  ? 'Click to unblock this website and resume ad delivery'
+                  : 'Click to block this website and see blocked ad notice'
+              }
+            >
+              {isTogglingDomain ? (
+                <RefreshCw className="w-3 h-3 animate-spin" />
+              ) : domainStatus === 'blocked' ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Unblock This Site</span>
+                </>
+              ) : (
+                <>
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>Block This Site</span>
+                </>
+              )}
+            </button>
+
+            <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
+              {domainStatus === 'blocked' ? (
+                <span className="text-rose-400 font-bold">{blockedCount} Slots Blocked</span>
+              ) : (
+                <span className="text-cyan-400 font-bold">{renderedCount} Ads Loaded</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -171,7 +323,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
               Top Placement: Leaderboard (LB-728x90-1)
             </span>
             <div className="flex justify-center">
-              <div className="ad-container" data-ad-slot="LB-728x90-1"></div>
+              <div
+                className="ad-container"
+                data-ad-slot="LB-728x90-1"
+                data-ad-domain={simulatedDomain}
+              ></div>
             </div>
           </div>
 
@@ -207,7 +363,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
                   In-Article Placement: Medium Rectangle (MR-300x250-1)
                 </span>
                 <div className="flex justify-center">
-                  <div className="ad-container" data-ad-slot="MR-300x250-1"></div>
+                  <div
+                    className="ad-container"
+                    data-ad-slot="MR-300x250-1"
+                    data-ad-domain={simulatedDomain}
+                  ></div>
                 </div>
               </div>
 
@@ -221,7 +381,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
                   Featured Outstream Video Placement (VID-01)
                 </span>
                 <div className="flex justify-center">
-                  <div className="ad-container" data-ad-slot="VID-01"></div>
+                  <div
+                    className="ad-container"
+                    data-ad-slot="VID-01"
+                    data-ad-domain={simulatedDomain}
+                  ></div>
                 </div>
               </div>
 
@@ -239,7 +403,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
                     Dynamically Injected Slot #{index + 1}: {slotId}
                   </span>
                   <div className="flex justify-center">
-                    <div className="ad-container" data-ad-slot={slotId}></div>
+                    <div
+                      className="ad-container"
+                      data-ad-slot={slotId}
+                      data-ad-domain={simulatedDomain}
+                    ></div>
                   </div>
                 </div>
               ))}
@@ -252,7 +420,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
                   Premium Sidebar Slot: Half Page (SB-300x600-1)
                 </span>
                 <div className="flex justify-center">
-                  <div className="ad-container" data-ad-slot="SB-300x600-1"></div>
+                  <div
+                    className="ad-container"
+                    data-ad-slot="SB-300x600-1"
+                    data-ad-domain={simulatedDomain}
+                  ></div>
                 </div>
               </div>
 
@@ -282,7 +454,11 @@ export const PublisherSandboxView: React.FC<PublisherSandboxViewProps> = ({
               Pre-Footer Placement: Billboard (BB-970x250-1)
             </span>
             <div className="flex justify-center overflow-x-auto">
-              <div className="ad-container" data-ad-slot="BB-970x250-1"></div>
+              <div
+                className="ad-container"
+                data-ad-slot="BB-970x250-1"
+                data-ad-domain={simulatedDomain}
+              ></div>
             </div>
           </div>
 

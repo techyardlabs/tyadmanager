@@ -1,11 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, TelemetryEvent, TimelinePoint } from '../src/types.js';
+import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, TelemetryEvent, TimelinePoint } from '../src/types.js';
 
 interface DatabaseSchema {
   campaigns: Campaign[];
   creatives: Creative[];
   events: TelemetryEvent[];
+  publishers?: PublisherDomain[];
 }
 
 const DB_FILE = path.resolve(process.cwd(), 'data-adserver.json');
@@ -134,11 +135,16 @@ class AdServerDatabase {
   private campaigns: Campaign[] = [];
   private creatives: Creative[] = [];
   private events: TelemetryEvent[] = [];
+  private publishers: PublisherDomain[] = [];
 
   constructor() {
     this.loadFromDisk();
     if (this.campaigns.length === 0 || this.creatives.length === 0) {
       this.seedInitialData();
+      this.saveToDisk();
+    }
+    if (this.publishers.length === 0) {
+      this.seedPublishers();
       this.saveToDisk();
     }
   }
@@ -151,6 +157,7 @@ class AdServerDatabase {
         this.campaigns = data.campaigns || [];
         this.creatives = data.creatives || [];
         this.events = data.events || [];
+        this.publishers = data.publishers || [];
       }
     } catch (err) {
       console.warn('Could not read persistent DB, reinitializing:', err);
@@ -163,11 +170,70 @@ class AdServerDatabase {
         campaigns: this.campaigns,
         creatives: this.creatives,
         events: this.events.slice(-1000), // keep latest 1000 events
+        publishers: this.publishers,
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       console.error('Failed to save DB to disk:', err);
     }
+  }
+
+  private seedPublishers() {
+    const now = new Date();
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const oneDayAgo = new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000).toISOString();
+
+    this.publishers = [
+      {
+        id: 'pub-chronicle-01',
+        domain: 'theglobalchronicle.media',
+        status: 'active',
+        firstSeen: twoWeeksAgo,
+        lastSeen: now.toISOString(),
+        totalRequests: 2480,
+        impressions: 1940,
+        clicks: 86,
+        slotsUsed: ['LB-728x90-1', 'MR-300x250-1', 'SB-300x600-1', 'VID-01', 'BB-970x250-1'],
+        notes: 'Verified Official Sandbox & Media Partner',
+      },
+      {
+        id: 'pub-local-02',
+        domain: 'localhost',
+        status: 'active',
+        firstSeen: twoWeeksAgo,
+        lastSeen: now.toISOString(),
+        totalRequests: 420,
+        impressions: 380,
+        clicks: 24,
+        slotsUsed: ['LB-728x90-1', 'MR-300x250-1'],
+        notes: 'Developer Localhost Testing',
+      },
+      {
+        id: 'pub-techblog-03',
+        domain: 'clouddevnews.io',
+        status: 'active',
+        firstSeen: fiveDaysAgo,
+        lastSeen: oneDayAgo,
+        totalRequests: 1150,
+        impressions: 920,
+        clicks: 48,
+        slotsUsed: ['LB-728x90-1', 'MR-300x250-2', 'SB-300x600-1'],
+        notes: 'Tech Publisher Network',
+      },
+      {
+        id: 'pub-spam-04',
+        domain: 'suspicious-traffic-hub.xyz',
+        status: 'blocked',
+        firstSeen: fiveDaysAgo,
+        lastSeen: oneDayAgo,
+        totalRequests: 620,
+        impressions: 0,
+        clicks: 0,
+        slotsUsed: ['MR-300x250-1'],
+        notes: 'Auto-flagged: High bounce, unverified bot scraper domain',
+      },
+    ];
   }
 
   private seedInitialData() {
@@ -1085,6 +1151,9 @@ class AdServerDatabase {
       { time: 'Now', impressions: Math.round(totalImpressions * 0.06), clicks: Math.round(totalClicks * 0.06) },
     ];
 
+    const activeDomainsCount = this.publishers.filter((p) => p.status === 'active').length;
+    const blockedDomainsCount = this.publishers.filter((p) => p.status === 'blocked').length;
+
     return {
       totalImpressions,
       totalClicks,
@@ -1094,10 +1163,147 @@ class AdServerDatabase {
       activeCreatives,
       totalCreatives: this.creatives.length,
       activeSlotsCount,
+      activeDomainsCount,
+      blockedDomainsCount,
+      totalDomainsCount: this.publishers.length,
       slotStats,
       timeline,
       recentEvents: this.events.slice(0, 50),
     };
+  }
+
+  // ==========================================
+  // PUBLISHER DOMAIN DETECTION & PROTECTION
+  // ==========================================
+
+  public normalizeDomain(raw?: string): string {
+    if (!raw) return 'unknown';
+    let clean = raw.trim().toLowerCase();
+    // Strip protocol
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      try {
+        const u = new URL(clean);
+        clean = u.hostname;
+      } catch (e) {
+        clean = clean.replace(/^https?:\/\//, '').split('/')[0];
+      }
+    } else {
+      clean = clean.split('/')[0].split('?')[0].split('#')[0];
+    }
+    // Strip port
+    clean = clean.split(':')[0].trim();
+    return clean || 'unknown';
+  }
+
+  public getPublisherDomains(): PublisherDomain[] {
+    return [...this.publishers].sort((a, b) => {
+      // Sort: blocked first, then highest requests/impressions
+      if (a.status !== b.status) {
+        return a.status === 'blocked' ? -1 : 1;
+      }
+      return b.totalRequests - a.totalRequests;
+    });
+  }
+
+  public isDomainBlocked(rawDomain?: string): boolean {
+    const domain = this.normalizeDomain(rawDomain);
+    if (!domain || domain === 'unknown') return false;
+    const pub = this.publishers.find((p) => p.domain === domain);
+    return pub ? pub.status === 'blocked' : false;
+  }
+
+  public recordDomainActivity(
+    rawDomain?: string,
+    slotId?: string,
+    eventType: 'request' | 'impression' | 'click' = 'request'
+  ): { isBlocked: boolean; domainRecord: PublisherDomain } {
+    const domain = this.normalizeDomain(rawDomain);
+    const now = new Date().toISOString();
+
+    let pub = this.publishers.find((p) => p.domain === domain);
+    if (!pub) {
+      pub = {
+        id: 'pub-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+        domain,
+        status: 'active',
+        firstSeen: now,
+        lastSeen: now,
+        totalRequests: 0,
+        impressions: 0,
+        clicks: 0,
+        slotsUsed: slotId ? [slotId] : [],
+        notes: 'Auto-detected from publisher web traffic',
+      };
+      this.publishers.push(pub);
+    }
+
+    pub.lastSeen = now;
+    if (eventType === 'request') {
+      pub.totalRequests += 1;
+    } else if (eventType === 'impression') {
+      pub.impressions += 1;
+    } else if (eventType === 'click') {
+      pub.clicks += 1;
+    }
+
+    if (slotId && !pub.slotsUsed.includes(slotId)) {
+      pub.slotsUsed.push(slotId);
+    }
+
+    this.saveToDisk();
+    return { isBlocked: pub.status === 'blocked', domainRecord: pub };
+  }
+
+  public toggleDomainStatus(idOrDomain: string, targetStatus?: 'active' | 'blocked'): PublisherDomain | null {
+    const norm = this.normalizeDomain(idOrDomain);
+    const pub = this.publishers.find((p) => p.id === idOrDomain || p.domain === norm);
+    if (!pub) return null;
+
+    if (targetStatus) {
+      pub.status = targetStatus;
+    } else {
+      pub.status = pub.status === 'active' ? 'blocked' : 'active';
+    }
+
+    this.saveToDisk();
+    return pub;
+  }
+
+  public addPublisherDomain(domainInput: string, status: 'active' | 'blocked' = 'active', notes: string = ''): PublisherDomain {
+    const domain = this.normalizeDomain(domainInput);
+    const now = new Date().toISOString();
+
+    let pub = this.publishers.find((p) => p.domain === domain);
+    if (pub) {
+      pub.status = status;
+      if (notes) pub.notes = notes;
+      pub.lastSeen = now;
+    } else {
+      pub = {
+        id: 'pub-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+        domain,
+        status,
+        firstSeen: now,
+        lastSeen: now,
+        totalRequests: 0,
+        impressions: 0,
+        clicks: 0,
+        slotsUsed: [],
+        notes: notes || 'Manually added to protection list',
+      };
+      this.publishers.push(pub);
+    }
+
+    this.saveToDisk();
+    return pub;
+  }
+
+  public deletePublisherDomain(id: string): boolean {
+    const idx = this.publishers.findIndex((p) => p.id === id);
+    if (idx === -1) return false;
+    this.publishers.splice(idx, 1);
+    this.saveToDisk();
+    return true;
   }
 }
 

@@ -3,9 +3,10 @@ import { Navbar, NavTab } from './components/Navbar.js';
 import { DashboardView } from './components/DashboardView.js';
 import { CreativesView } from './components/CreativesView.js';
 import { CampaignsView } from './components/CampaignsView.js';
+import { PublishersView } from './components/PublishersView.js';
 import { TagGeneratorView } from './components/TagGeneratorView.js';
 import { PublisherSandboxView } from './components/PublisherSandboxView.js';
-import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, SlotDefinition } from './types.js';
+import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, SlotDefinition } from './types.js';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -15,6 +16,8 @@ export default function App() {
   >([]);
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [publishers, setPublishers] = useState<PublisherDomain[]>([]);
+  const [isPublishersLoading, setIsPublishersLoading] = useState(false);
   const [selectedSlotFilter, setSelectedSlotFilter] = useState<string>('all');
   const [tagSlotId, setTagSlotId] = useState<string>('MR-300x250-1');
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -29,11 +32,12 @@ export default function App() {
   // Fetch all data
   const fetchData = useCallback(async () => {
     try {
-      const [statsRes, slotsRes, creativesRes, campaignsRes] = await Promise.all([
+      const [statsRes, slotsRes, creativesRes, campaignsRes, pubRes] = await Promise.all([
         fetch('/api/dashboard/stats'),
         fetch('/api/slots'),
         fetch('/api/creatives'),
         fetch('/api/campaigns'),
+        fetch('/api/publishers'),
       ]);
 
       if (statsRes.ok) {
@@ -51,6 +55,10 @@ export default function App() {
       if (campaignsRes.ok) {
         const d = await campaignsRes.json();
         setCampaigns(d);
+      }
+      if (pubRes.ok) {
+        const d = await pubRes.json();
+        setPublishers(d);
       }
     } catch (err) {
       console.error('Failed to load adserver data:', err);
@@ -178,6 +186,59 @@ export default function App() {
     }
   };
 
+  // Publisher Domain Management Handlers
+  const handleToggleDomainStatus = async (id: string, newStatus: 'active' | 'blocked') => {
+    try {
+      const res = await fetch(`/api/publishers/${id}/toggle`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        const updated: PublisherDomain = await res.json();
+        setPublishers((prev) => prev.map((p) => (p.id === id ? updated : p)));
+        showNotification(
+          newStatus === 'blocked'
+            ? `🚫 Website '${updated.domain}' is now BLOCKED from serving ads.`
+            : `✅ Website '${updated.domain}' is now UNBLOCKED and delivering ads.`
+        );
+        fetchData();
+      }
+    } catch (err: any) {
+      console.error('Failed to toggle domain:', err);
+      alert('Failed to update domain: ' + err.message);
+    }
+  };
+
+  const handleAddDomain = async (domain: string, status: 'active' | 'blocked', notes: string) => {
+    try {
+      const res = await fetch('/api/publishers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, status, notes }),
+      });
+      if (res.ok) {
+        showNotification(`Domain '${domain}' added (${status === 'blocked' ? 'Blocked' : 'Active'})`);
+        await fetchData();
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error adding domain: ' + err.message);
+    }
+  };
+
+  const handleDeleteDomain = async (id: string) => {
+    try {
+      const res = await fetch(`/api/publishers/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        showNotification('Domain removed from tracking list');
+        await fetchData();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   // Navigation callbacks
   const handleSelectSlotFromDashboard = (slotId: string) => {
     setSelectedSlotFilter(slotId);
@@ -192,6 +253,8 @@ export default function App() {
   const handleNavigateToSandbox = () => {
     setCurrentTab('sandbox');
   };
+
+  const blockedDomainsCount = publishers.filter((p) => p.status === 'blocked').length;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
@@ -211,6 +274,7 @@ export default function App() {
         isResetting={isResetting}
         autoRefresh={autoRefresh}
         onToggleAutoRefresh={() => setAutoRefresh(!autoRefresh)}
+        blockedCount={blockedDomainsCount}
       />
 
       {/* Main Content Area */}
@@ -222,6 +286,7 @@ export default function App() {
             onSelectSlot={handleSelectSlotFromDashboard}
             onNavigateToTags={handleNavigateToTags}
             onNavigateToSandbox={handleNavigateToSandbox}
+            onNavigateToPublishers={() => setCurrentTab('publishers')}
           />
         )}
 
@@ -243,6 +308,18 @@ export default function App() {
             creatives={creatives}
             onSaveCampaign={handleSaveCampaign}
             onDeleteCampaign={handleDeleteCampaign}
+          />
+        )}
+
+        {currentTab === 'publishers' && (
+          <PublishersView
+            publishers={publishers}
+            isLoading={isPublishersLoading}
+            onToggleStatus={handleToggleDomainStatus}
+            onAddDomain={handleAddDomain}
+            onDeleteDomain={handleDeleteDomain}
+            onRefresh={fetchData}
+            onNavigateToSandbox={handleNavigateToSandbox}
           />
         )}
 

@@ -501,5 +501,71 @@
       "timestamp": "2026-09-09T06:25:29.404Z",
       "referer": "https://globalnewsmedia.io/tech-weekly"
     }
+  ],
+  "publishers": [
+    {
+      "id": "pub-chronicle-01",
+      "domain": "theglobalchronicle.media",
+      "status": "active",
+      "firstSeen": "2026-08-26T07:40:36.306Z",
+      "lastSeen": "2026-09-09T07:40:59.092Z",
+      "totalRequests": 2483,
+      "impressions": 1940,
+      "clicks": 86,
+      "slotsUsed": [
+        "LB-728x90-1",
+        "MR-300x250-1",
+        "SB-300x600-1",
+        "VID-01",
+        "BB-970x250-1"
+      ],
+      "notes": "Verified Official Sandbox & Media Partner"
+    },
+    {
+      "id": "pub-local-02",
+      "domain": "localhost",
+      "status": "active",
+      "firstSeen": "2026-08-26T07:40:36.306Z",
+      "lastSeen": "2026-09-09T07:40:36.306Z",
+      "totalRequests": 420,
+      "impressions": 380,
+      "clicks": 24,
+      "slotsUsed": [
+        "LB-728x90-1",
+        "MR-300x250-1"
+      ],
+      "notes": "Developer Localhost Testing"
+    },
+    {
+      "id": "pub-techblog-03",
+      "domain": "clouddevnews.io",
+      "status": "active",
+      "firstSeen": "2026-09-04T07:40:36.306Z",
+      "lastSeen": "2026-09-08T07:40:36.306Z",
+      "totalRequests": 1150,
+      "impressions": 920,
+      "clicks": 48,
+      "slotsUsed": [
+        "LB-728x90-1",
+        "MR-300x250-2",
+        "SB-300x600-1"
+      ],
+      "notes": "Tech Publisher Network"
+    },
+    {
+      "id": "pub-spam-04",
+      "domain": "suspicious-traffic-hub.xyz",
+      "status": "blocked",
+      "firstSeen": "2026-09-04T07:40:36.306Z",
+      "lastSeen": "2026-09-09T07:40:39.987Z",
+      "totalRequests": 621,
+      "impressions": 0,
+      "clicks": 0,
+      "slotsUsed": [
+        "MR-300x250-1",
+        "LB-728x90-1"
+      ],
+      "notes": "Auto-flagged: High bounce, unverified bot scraper domain"
+    }
   ]
 }

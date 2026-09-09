@@ -11,6 +11,8 @@ import {
   Radio,
   ExternalLink,
   ShieldCheck,
+  ShieldAlert,
+  Globe,
   Zap,
 } from 'lucide-react';
 import { DashboardStats, PREDEFINED_SLOTS, SlotDefinition } from '../types.js';
@@ -21,6 +23,7 @@ interface DashboardViewProps {
   onSelectSlot: (slotId: string) => void;
   onNavigateToTags: (slotId: string) => void;
   onNavigateToSandbox: () => void;
+  onNavigateToPublishers?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -29,6 +32,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectSlot,
   onNavigateToTags,
   onNavigateToSandbox,
+  onNavigateToPublishers,
 }) => {
   const impressions = stats?.totalImpressions ?? 0;
   const clicks = stats?.totalClicks ?? 0;
@@ -61,6 +65,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2 w-full md:w-auto">
+          {onNavigateToPublishers && (
+            <button
+              onClick={onNavigateToPublishers}
+              className="flex-1 md:flex-none flex items-center justify-center space-x-2 text-xs font-semibold px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all cursor-pointer"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+              <span>Websites &amp; Blocklist</span>
+              {(stats?.blockedDomainsCount ?? 0) > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-300 text-[10px]">
+                  {stats?.blockedDomainsCount} Blocked
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             onClick={onNavigateToSandbox}
             className="flex-1 md:flex-none flex items-center justify-center space-x-2 text-xs font-semibold px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
@@ -70,6 +89,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Website Traffic & Protection Snapshot */}
+      {onNavigateToPublishers && (
+        <div className="bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center space-x-3 text-xs">
+            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <Globe className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="font-semibold text-white">Publisher Domains Detected:</span>
+              <span className="text-slate-300 ml-2 font-mono">
+                {stats?.totalDomainsCount ?? 0} Websites
+              </span>
+              <span className="text-slate-500 mx-2">•</span>
+              <span className="text-emerald-400 font-semibold font-mono">
+                {stats?.activeDomainsCount ?? 0} Active
+              </span>
+              <span className="text-slate-500 mx-2">•</span>
+              <span className="text-rose-400 font-semibold font-mono">
+                {stats?.blockedDomainsCount ?? 0} Blocked
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={onNavigateToPublishers}
+            className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 cursor-pointer"
+          >
+            <span>Manage Websites &amp; 1-Click Blocking</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

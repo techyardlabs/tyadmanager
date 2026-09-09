@@ -219,6 +219,19 @@
       '</div></div></div>';
   }
 
+  function renderBlocked(container, slotId, domain) {
+    container.setAttribute('data-ad-status', 'blocked');
+    container.innerHTML =
+      '<div style="border:1px dashed rgba(239,68,68,0.4);border-radius:6px;background:rgba(239,68,68,0.06);color:#f87171;font-size:11px;display:flex;align-items:center;justify-content:center;padding:14px;text-align:center;min-height:70px;font-family:system-ui,-apple-system,sans-serif;">' +
+      '<div><div style="font-weight:700;color:#ef4444;display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:3px;"><span style="font-size:14px;">&#128683;</span> Ad Delivery Blocked by Admin</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;opacity:0.9;">Website domain <strong>' +
+      (domain || 'this site') +
+      '</strong> is currently restricted from serving ads.</div>' +
+      '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">Slot: ' +
+      slotId +
+      '</div></div></div>';
+  }
+
   function loadSlot(container) {
     var slotId = container.getAttribute('data-ad-slot');
     if (!slotId) return;
@@ -229,10 +242,13 @@
 
     container.setAttribute('data-ad-status', 'loading');
 
+    var currentDomain = container.getAttribute('data-ad-domain') || window.location.hostname || '';
     var apiUrl =
       serverOrigin +
       '/api/serve?slot=' +
       encodeURIComponent(slotId) +
+      '&domain=' +
+      encodeURIComponent(currentDomain) +
       '&ref=' +
       encodeURIComponent(window.location.href) +
       '&cb=' +
@@ -245,7 +261,9 @@
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           var response = JSON.parse(xhr.responseText);
-          if (response && response.ad) {
+          if (response && response.blocked) {
+            renderBlocked(container, slotId, response.domain || currentDomain);
+          } else if (response && response.ad) {
             renderAd(container, response.ad);
           } else {
             renderFallback(container, slotId);
