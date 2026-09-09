@@ -1,0 +1,6 @@
+{
+  "name": "AdServer Manager",
+  "description": "Production-grade self-hosted ad server and ad manager portal with dynamic JS delivery tag and real-time impression and click tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
