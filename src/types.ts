@@ -291,3 +291,28 @@ export const PREDEFINED_SLOTS: SlotDefinition[] = [
     allowedFormats: ['video'],
   },
 ];
+
+export type UserRole = 'admin' | 'manager';
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: UserAccount;
+  expiresAt: string;
+}
+
+export interface AuthState {
+  isAuthenticated: boolean;
+  token: string | null;
+  user: UserAccount | null;
+  isLoading: boolean;
+}

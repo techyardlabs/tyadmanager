@@ -1,12 +1,35 @@
 import fs from 'fs';
 import path from 'path';
-import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, TelemetryEvent, TimelinePoint } from '../src/types.js';
+import crypto from 'crypto';
+import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, TelemetryEvent, TimelinePoint, UserAccount, UserRole } from '../src/types.js';
+
+export interface StoredUser {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  passwordHash: string;
+  salt: string;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
+export interface UserSession {
+  token: string;
+  userId: string;
+  username: string;
+  role: UserRole;
+  createdAt: string;
+  expiresAt: string;
+}
 
 interface DatabaseSchema {
   campaigns: Campaign[];
   creatives: Creative[];
   events: TelemetryEvent[];
   publishers?: PublisherDomain[];
+  users?: StoredUser[];
 }
 
 const DB_FILE = path.resolve(process.cwd(), 'data-adserver.json');
@@ -136,6 +159,8 @@ class AdServerDatabase {
   private creatives: Creative[] = [];
   private events: TelemetryEvent[] = [];
   private publishers: PublisherDomain[] = [];
+  private users: StoredUser[] = [];
+  private sessions: Map<string, UserSession> = new Map();
 
   constructor() {
     this.loadFromDisk();
@@ -145,6 +170,10 @@ class AdServerDatabase {
     }
     if (this.publishers.length === 0) {
       this.seedPublishers();
+      this.saveToDisk();
+    }
+    if (this.users.length === 0) {
+      this.seedInitialUser();
       this.saveToDisk();
     }
   }
@@ -158,6 +187,7 @@ class AdServerDatabase {
         this.creatives = data.creatives || [];
         this.events = data.events || [];
         this.publishers = data.publishers || [];
+        this.users = data.users || [];
       }
     } catch (err) {
       console.warn('Could not read persistent DB, reinitializing:', err);
@@ -171,11 +201,38 @@ class AdServerDatabase {
         creatives: this.creatives,
         events: this.events.slice(-1000), // keep latest 1000 events
         publishers: this.publishers,
+        users: this.users,
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       console.error('Failed to save DB to disk:', err);
     }
+  }
+
+  public hashPassword(password: string, salt?: string): { hash: string; salt: string } {
+    const actualSalt = salt || crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(password, actualSalt, 10000, 64, 'sha512').toString('hex');
+    return { hash, salt: actualSalt };
+  }
+
+  public verifyPassword(password: string, hash: string, salt: string): boolean {
+    const check = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+    return check === hash;
+  }
+
+  private seedInitialUser() {
+    const { hash, salt } = this.hashPassword('admin123');
+    const adminUser: StoredUser = {
+      id: 'usr-admin-01',
+      username: 'admin',
+      name: 'AdServer Administrator',
+      email: 'admin@adserver.io',
+      role: 'admin',
+      passwordHash: hash,
+      salt,
+      createdAt: new Date().toISOString(),
+    };
+    this.users = [adminUser];
   }
 
   private seedPublishers() {
@@ -1304,6 +1361,223 @@ class AdServerDatabase {
     this.publishers.splice(idx, 1);
     this.saveToDisk();
     return true;
+  }
+
+  // ==========================================
+  // USER AUTHENTICATION & MANAGEMENT
+  // ==========================================
+
+  public authenticateUser(
+    usernameOrEmail: string,
+    password: string
+  ): { user: UserAccount; token: string } | null {
+    const query = (usernameOrEmail || '').trim().toLowerCase();
+    if (!query || !password) return null;
+
+    const user = this.users.find(
+      (u) => u.username.toLowerCase() === query || u.email.toLowerCase() === query
+    );
+    if (!user) return null;
+
+    const isValid = this.verifyPassword(password, user.passwordHash, user.salt);
+    if (!isValid) return null;
+
+    user.lastLoginAt = new Date().toISOString();
+    this.saveToDisk();
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    this.sessions.set(token, {
+      token,
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+    });
+
+    const { passwordHash, salt, ...safeUser } = user;
+    return { user: safeUser, token };
+  }
+
+  public validateSession(token: string): UserAccount | null {
+    if (!token) return null;
+    const session = this.sessions.get(token);
+    if (!session) return null;
+
+    if (new Date(session.expiresAt).getTime() < Date.now()) {
+      this.sessions.delete(token);
+      return null;
+    }
+
+    const user = this.users.find((u) => u.id === session.userId);
+    if (!user) return null;
+
+    const { passwordHash, salt, ...safeUser } = user;
+    return safeUser;
+  }
+
+  public destroySession(token: string): boolean {
+    return this.sessions.delete(token);
+  }
+
+  public getUsers(): UserAccount[] {
+    return this.users.map(({ passwordHash, salt, ...safeUser }) => safeUser);
+  }
+
+  public getUserById(id: string): UserAccount | null {
+    const user = this.users.find((u) => u.id === id);
+    if (!user) return null;
+    const { passwordHash, salt, ...safeUser } = user;
+    return safeUser;
+  }
+
+  public createUser(data: {
+    username: string;
+    name: string;
+    email: string;
+    password: string;
+    role?: UserRole;
+  }): { success: boolean; user?: UserAccount; error?: string } {
+    const trimmedUsername = (data.username || '').trim().toLowerCase();
+    const trimmedEmail = (data.email || '').trim().toLowerCase();
+
+    if (!trimmedUsername || !data.password || !trimmedEmail) {
+      return { success: false, error: 'Username, email, and password are required' };
+    }
+
+    if (trimmedUsername.length < 3) {
+      return { success: false, error: 'Username must be at least 3 characters' };
+    }
+
+    if (data.password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters' };
+    }
+
+    if (this.users.some((u) => u.username.toLowerCase() === trimmedUsername)) {
+      return { success: false, error: `Username "${trimmedUsername}" is already taken` };
+    }
+
+    if (this.users.some((u) => u.email.toLowerCase() === trimmedEmail)) {
+      return { success: false, error: `Email "${trimmedEmail}" is already registered` };
+    }
+
+    const { hash, salt } = this.hashPassword(data.password);
+    const newUser: StoredUser = {
+      id: 'usr-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+      username: trimmedUsername,
+      name: (data.name || '').trim() || trimmedUsername,
+      email: trimmedEmail,
+      role: data.role || 'manager',
+      passwordHash: hash,
+      salt,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.users.push(newUser);
+    this.saveToDisk();
+
+    const { passwordHash, salt: _, ...safeUser } = newUser;
+    return { success: true, user: safeUser };
+  }
+
+  public updateUser(
+    id: string,
+    updates: { name?: string; email?: string; role?: UserRole; newPassword?: string }
+  ): { success: boolean; user?: UserAccount; error?: string } {
+    const user = this.users.find((u) => u.id === id);
+    if (!user) return { success: false, error: 'User not found' };
+
+    if (updates.email) {
+      const trimmedEmail = updates.email.trim().toLowerCase();
+      const existing = this.users.find((u) => u.email.toLowerCase() === trimmedEmail && u.id !== id);
+      if (existing) {
+        return { success: false, error: `Email "${trimmedEmail}" is already in use by another account` };
+      }
+      user.email = trimmedEmail;
+    }
+
+    if (updates.name !== undefined) {
+      user.name = updates.name.trim();
+    }
+
+    if (updates.role) {
+      // If demoting an admin, ensure another active admin remains
+      if (user.role === 'admin' && updates.role !== 'admin') {
+        const adminCount = this.users.filter((u) => u.role === 'admin').length;
+        if (adminCount <= 1) {
+          return { success: false, error: 'Cannot change role: At least one Administrator is required' };
+        }
+      }
+      user.role = updates.role;
+    }
+
+    if (updates.newPassword) {
+      if (updates.newPassword.length < 6) {
+        return { success: false, error: 'Password must be at least 6 characters' };
+      }
+      const { hash, salt } = this.hashPassword(updates.newPassword);
+      user.passwordHash = hash;
+      user.salt = salt;
+    }
+
+    this.saveToDisk();
+    const { passwordHash, salt, ...safeUser } = user;
+    return { success: true, user: safeUser };
+  }
+
+  public changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string
+  ): { success: boolean; error?: string } {
+    const user = this.users.find((u) => u.id === userId);
+    if (!user) return { success: false, error: 'User not found' };
+
+    const isValid = this.verifyPassword(currentPassword, user.passwordHash, user.salt);
+    if (!isValid) {
+      return { success: false, error: 'Current password does not match' };
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'New password must be at least 6 characters' };
+    }
+
+    const { hash, salt } = this.hashPassword(newPassword);
+    user.passwordHash = hash;
+    user.salt = salt;
+
+    this.saveToDisk();
+    return { success: true };
+  }
+
+  public deleteUser(id: string, requestUserId?: string): { success: boolean; error?: string } {
+    if (requestUserId && id === requestUserId) {
+      return { success: false, error: 'You cannot delete your own logged-in account' };
+    }
+
+    const idx = this.users.findIndex((u) => u.id === id);
+    if (idx === -1) return { success: false, error: 'User not found' };
+
+    const user = this.users[idx];
+    if (user.role === 'admin') {
+      const adminCount = this.users.filter((u) => u.role === 'admin').length;
+      if (adminCount <= 1) {
+        return { success: false, error: 'Cannot delete the last remaining Administrator account' };
+      }
+    }
+
+    // Terminate any active sessions for deleted user
+    for (const [token, session] of this.sessions.entries()) {
+      if (session.userId === id) {
+        this.sessions.delete(token);
+      }
+    }
+
+    this.users.splice(idx, 1);
+    this.saveToDisk();
+    return { success: true };
   }
 }
 

@@ -1,0 +1,77 @@
+<svg viewBox="0 0 500 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Left Wing Gradients (Warm: Red -> Orange -> Yellow) -->
+    <linearGradient id="ty-l-wing" x1="50" y1="15" x2="243" y2="135" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#EF233C" />
+      <stop offset="45%" stop-color="#FF6B00" />
+      <stop offset="100%" stop-color="#FFB703" />
+    </linearGradient>
+
+    <linearGradient id="ty-l-core" x1="170" y1="135" x2="243" y2="295" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF7A00" />
+      <stop offset="50%" stop-color="#FFB703" />
+      <stop offset="100%" stop-color="#FFD166" />
+    </linearGradient>
+
+    <linearGradient id="ty-l-mid" x1="170" y1="135" x2="220" y2="295" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E63946" />
+      <stop offset="70%" stop-color="#D90429" />
+      <stop offset="100%" stop-color="#C2185B" />
+    </linearGradient>
+
+    <linearGradient id="ty-l-bottom" x1="170" y1="295" x2="243" y2="408" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E91E63" />
+      <stop offset="60%" stop-color="#D81B60" />
+      <stop offset="100%" stop-color="#880E4F" />
+    </linearGradient>
+
+    <!-- Right Wing Gradients (Cool: Cyan -> Royal Blue -> Violet) -->
+    <linearGradient id="ty-r-wing" x1="450" y1="15" x2="257" y2="135" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00F5D4" />
+      <stop offset="40%" stop-color="#00B4D8" />
+      <stop offset="100%" stop-color="#0077B6" />
+    </linearGradient>
+
+    <linearGradient id="ty-r-core" x1="330" y1="135" x2="257" y2="295" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00B4D8" />
+      <stop offset="60%" stop-color="#0077B6" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+
+    <linearGradient id="ty-r-mid" x1="330" y1="135" x2="280" y2="295" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="60%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+
+    <linearGradient id="ty-r-bottom" x1="330" y1="295" x2="257" y2="408" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8B5CF6" />
+      <stop offset="60%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#4C1D95" />
+    </linearGradient>
+  </defs>
+
+  <!-- Left Wing Half -->
+  <g id="left-wing">
+    <polygon points="50,15 243,135 170,135" fill="url(#ty-l-wing)" />
+    <polygon points="170,135 243,135 243,295" fill="url(#ty-l-core)" />
+    <polygon points="170,135 243,295 170,295" fill="url(#ty-l-mid)" />
+    <polygon points="170,295 243,295 243,408 170,305" fill="url(#ty-l-bottom)" />
+  </g>
+
+  <!-- Right Wing Half -->
+  <g id="right-wing">
+    <polygon points="450,15 257,135 330,135" fill="url(#ty-r-wing)" />
+    <polygon points="330,135 257,135 257,295" fill="url(#ty-r-core)" />
+    <polygon points="330,135 257,295 330,295" fill="url(#ty-r-mid)" />
+    <polygon points="330,295 257,295 257,408 330,305" fill="url(#ty-r-bottom)" />
+  </g>
+
+  <!-- Brand Typography -->
+  <text x="250" y="468" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="34" letter-spacing="2">
+    TECHYARD LABS
+  </text>
+  <text x="250" y="500" text-anchor="middle" fill="#94A3B8" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600" font-size="14" letter-spacing="4">
+    EMPOWERED BY INNOVATION
+  </text>
+</svg>

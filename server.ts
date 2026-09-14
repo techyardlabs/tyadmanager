@@ -231,8 +231,116 @@ async function startServer() {
   });
 
   // ==========================================
-  // ADMIN CONTROL PANEL REST APIS
+  // ADMIN & AUTH CONTROL PANEL REST APIS
   // ==========================================
+
+  // Session user resolver
+  const getAuthUser = (req: Request) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return null;
+    }
+    const token = authHeader.substring(7).trim();
+    return adServerDb.validateSession(token);
+  };
+
+  // 1. Authentication Endpoints
+  app.post('/api/auth/login', (req: Request, res: Response) => {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      res.status(400).json({ error: 'Username and password are required' });
+      return;
+    }
+
+    const result = adServerDb.authenticateUser(username, password);
+    if (!result) {
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      user: result.user,
+      token: result.token,
+    });
+  });
+
+  app.get('/api/auth/me', (req: Request, res: Response) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Unauthorized or session expired' });
+      return;
+    }
+    res.json({ user });
+  });
+
+  app.post('/api/auth/logout', (req: Request, res: Response) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      adServerDb.destroySession(token);
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  });
+
+  app.post('/api/auth/change-password', (req: Request, res: Response) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({ error: 'Current password and new password are required' });
+      return;
+    }
+
+    const result = adServerDb.changePassword(user.id, currentPassword, newPassword);
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Failed to change password' });
+      return;
+    }
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  });
+
+  // 2. User Management Endpoints
+  app.get('/api/users', (req: Request, res: Response) => {
+    res.json(adServerDb.getUsers());
+  });
+
+  app.post('/api/users', (req: Request, res: Response) => {
+    const { username, name, email, password, role } = req.body || {};
+    const result = adServerDb.createUser({ username, name, email, password, role });
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Failed to create user' });
+      return;
+    }
+    res.status(201).json(result.user);
+  });
+
+  app.put('/api/users/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { name, email, role, newPassword } = req.body || {};
+    const result = adServerDb.updateUser(id, { name, email, role, newPassword });
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Failed to update user' });
+      return;
+    }
+    res.json(result.user);
+  });
+
+  app.delete('/api/users/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const currentUser = getAuthUser(req);
+    const result = adServerDb.deleteUser(id, currentUser?.id);
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Failed to delete user' });
+      return;
+    }
+    res.json({ success: true, message: 'User deleted successfully' });
+  });
 
   // Dashboard Stats
   app.get('/api/dashboard/stats', (req: Request, res: Response) => {

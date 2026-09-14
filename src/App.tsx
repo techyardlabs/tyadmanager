@@ -6,9 +6,31 @@ import { CampaignsView } from './components/CampaignsView.js';
 import { PublishersView } from './components/PublishersView.js';
 import { TagGeneratorView } from './components/TagGeneratorView.js';
 import { PublisherSandboxView } from './components/PublisherSandboxView.js';
-import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, SlotDefinition } from './types.js';
+import { LoginView } from './components/LoginView.js';
+import { UserManagementView } from './components/UserManagementView.js';
+import { TechYardMark } from './components/TechYardLogo.js';
+import { Campaign, Creative, DashboardStats, PREDEFINED_SLOTS, PublisherDomain, SlotDefinition, UserAccount } from './types.js';
 
 export default function App() {
+  // Authentication State
+  const [user, setUser] = useState<UserAccount | null>(() => {
+    const saved = localStorage.getItem('adserver_auth_user') || sessionStorage.getItem('adserver_auth_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem('adserver_auth_token') || sessionStorage.getItem('adserver_auth_token');
+  });
+
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [slots, setSlots] = useState<
@@ -29,15 +51,98 @@ export default function App() {
     setTimeout(() => setNotification(null), 3500);
   };
 
+  // Verify stored session on boot
+  useEffect(() => {
+    const verifySession = async () => {
+      const savedToken =
+        localStorage.getItem('adserver_auth_token') ||
+        sessionStorage.getItem('adserver_auth_token');
+
+      if (!savedToken) {
+        setUser(null);
+        setToken(null);
+        setIsAuthChecking(false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${savedToken}` },
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data.user);
+          setToken(savedToken);
+        } else {
+          // Token expired or invalid
+          localStorage.removeItem('adserver_auth_token');
+          localStorage.removeItem('adserver_auth_user');
+          sessionStorage.removeItem('adserver_auth_token');
+          sessionStorage.removeItem('adserver_auth_user');
+          setUser(null);
+          setToken(null);
+        }
+      } catch (err) {
+        console.warn('Network issue during session check:', err);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+
+    verifySession();
+  }, []);
+
+  const handleLoginSuccess = (loggedInUser: UserAccount, authToken: string) => {
+    setUser(loggedInUser);
+    setToken(authToken);
+    showNotification(`Signed in as ${loggedInUser.name || loggedInUser.username}`);
+  };
+
+  const handleLogout = async () => {
+    if (token) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (err) {
+        console.warn('Logout error', err);
+      }
+    }
+
+    localStorage.removeItem('adserver_auth_token');
+    localStorage.removeItem('adserver_auth_user');
+    sessionStorage.removeItem('adserver_auth_token');
+    sessionStorage.removeItem('adserver_auth_user');
+    setUser(null);
+    setToken(null);
+    setCurrentTab('dashboard');
+    showNotification('Signed out of portal');
+  };
+
+  // Authenticated fetch wrapper
+  const authFetch = useCallback(
+    (url: string, options: RequestInit = {}) => {
+      const headers = {
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      return fetch(url, { ...options, headers });
+    },
+    [token]
+  );
+
   // Fetch all data
   const fetchData = useCallback(async () => {
+    if (!token) return;
     try {
       const [statsRes, slotsRes, creativesRes, campaignsRes, pubRes] = await Promise.all([
-        fetch('/api/dashboard/stats'),
-        fetch('/api/slots'),
-        fetch('/api/creatives'),
-        fetch('/api/campaigns'),
-        fetch('/api/publishers'),
+        authFetch('/api/dashboard/stats'),
+        authFetch('/api/slots'),
+        authFetch('/api/creatives'),
+        authFetch('/api/campaigns'),
+        authFetch('/api/publishers'),
       ]);
 
       if (statsRes.ok) {
@@ -63,20 +168,22 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load adserver data:', err);
     }
-  }, []);
+  }, [token, authFetch]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (token) {
+      fetchData();
+    }
+  }, [fetchData, token]);
 
   // Live polling every 4 seconds for real-time impression & click streams
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !token) return;
     const interval = setInterval(() => {
       fetchData();
     }, 4000);
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchData]);
+  }, [autoRefresh, fetchData, token]);
 
   // Save or update creative
   const handleSaveCreative = async (creativeData: Partial<Creative>, isNew: boolean) => {
@@ -84,7 +191,7 @@ export default function App() {
       const url = isNew ? '/api/creatives' : `/api/creatives/${creativeData.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(creativeData),
@@ -106,7 +213,7 @@ export default function App() {
   const handleDeleteCreative = async (id: string) => {
     if (!confirm('Are you sure you want to delete this creative?')) return;
     try {
-      const res = await fetch(`/api/creatives/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/creatives/${id}`, { method: 'DELETE' });
       if (res.ok) {
         showNotification('Creative deleted');
         await fetchData();
@@ -120,7 +227,7 @@ export default function App() {
   const handleToggleStatus = async (creative: Creative) => {
     const newStatus = creative.status === 'active' ? 'paused' : 'active';
     try {
-      const res = await fetch(`/api/creatives/${creative.id}`, {
+      const res = await authFetch(`/api/creatives/${creative.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
@@ -140,7 +247,7 @@ export default function App() {
       const url = isNew ? '/api/campaigns' : `/api/campaigns/${campaignData.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(campaignData),
@@ -159,7 +266,7 @@ export default function App() {
   const handleDeleteCampaign = async (id: string) => {
     if (!confirm('Are you sure you want to delete this campaign? All assigned creatives will also be removed.')) return;
     try {
-      const res = await fetch(`/api/campaigns/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/campaigns/${id}`, { method: 'DELETE' });
       if (res.ok) {
         showNotification('Campaign removed');
         await fetchData();
@@ -174,7 +281,7 @@ export default function App() {
     if (!confirm('Reset all Impression and Click counters across all campaigns to 0?')) return;
     setIsResetting(true);
     try {
-      const res = await fetch('/api/reset-stats', { method: 'POST' });
+      const res = await authFetch('/api/reset-stats', { method: 'POST' });
       if (res.ok) {
         showNotification('All impression and click statistics reset to 0.');
         await fetchData();
@@ -189,7 +296,7 @@ export default function App() {
   // Publisher Domain Management Handlers
   const handleToggleDomainStatus = async (id: string, newStatus: 'active' | 'blocked') => {
     try {
-      const res = await fetch(`/api/publishers/${id}/toggle`, {
+      const res = await authFetch(`/api/publishers/${id}/toggle`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
@@ -212,7 +319,7 @@ export default function App() {
 
   const handleAddDomain = async (domain: string, status: 'active' | 'blocked', notes: string) => {
     try {
-      const res = await fetch('/api/publishers', {
+      const res = await authFetch('/api/publishers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain, status, notes }),
@@ -229,7 +336,7 @@ export default function App() {
 
   const handleDeleteDomain = async (id: string) => {
     try {
-      const res = await fetch(`/api/publishers/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/publishers/${id}`, { method: 'DELETE' });
       if (res.ok) {
         showNotification('Domain removed from tracking list');
         await fetchData();
@@ -256,6 +363,21 @@ export default function App() {
 
   const blockedDomainsCount = publishers.filter((p) => p.status === 'blocked').length;
 
+  // Render Authentication Loading State
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+        <div className="w-9 h-9 border-2 border-blue-500/20 border-t-cyan-400 rounded-full animate-spin mb-3" />
+        <span className="text-xs font-mono text-slate-400">Authenticating Portal Session...</span>
+      </div>
+    );
+  }
+
+  // Render Login Gate if unauthenticated
+  if (!user || !token) {
+    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       {/* Toast Notification */}
@@ -275,6 +397,8 @@ export default function App() {
         autoRefresh={autoRefresh}
         onToggleAutoRefresh={() => setAutoRefresh(!autoRefresh)}
         blockedCount={blockedDomainsCount}
+        currentUser={user}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -333,15 +457,37 @@ export default function App() {
         {currentTab === 'sandbox' && (
           <PublisherSandboxView onAdEventTriggered={fetchData} />
         )}
+
+        {currentTab === 'users' && (
+          <UserManagementView
+            currentUser={user}
+            authToken={token}
+            onUserUpdated={(updated) => {
+              setUser(updated);
+              if (localStorage.getItem('adserver_auth_token')) {
+                localStorage.setItem('adserver_auth_user', JSON.stringify(updated));
+              } else {
+                sessionStorage.setItem('adserver_auth_user', JSON.stringify(updated));
+              }
+            }}
+          />
+        )}
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>AdServer Pro &bull; Production-Grade Central Delivery &amp; Management Architecture</span>
-          <span className="text-slate-400">
-            CORS Active &bull; Low-Latency Delivery &bull; IAB 50% Viewability
-          </span>
+      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-xs text-slate-500 font-mono">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <TechYardMark className="w-5 h-5 shrink-0" />
+            <span className="text-slate-200 font-bold tracking-tight">TECHYARD <span className="text-cyan-400 font-medium">LABS</span></span>
+            <span className="text-slate-700 hidden sm:inline">&bull;</span>
+            <span className="text-slate-400 text-[11px] tracking-wider uppercase hidden sm:inline">Empowered by Innovation</span>
+          </div>
+          <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+            <span>AdServer Pro</span>
+            <span className="text-slate-700">&bull;</span>
+            <span>CORS Active &bull; Low-Latency Delivery</span>
+          </div>
         </div>
       </footer>
     </div>
